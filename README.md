@@ -136,21 +136,38 @@ CREATE TABLE wp_role_category_permissions (
 ### Filters
 
 ```php
-// Lấy danh sách categories được phép cho user hiện tại
-$allowed_categories = apply_filters('rcm_allowed_categories', $categories, $user_id);
-
 // Kiểm tra xem user có quyền xem category không
 $has_permission = apply_filters('rcm_has_category_permission', $has_permission, $category_id, $user_id);
+
+// Cho phép tất cả categories với guest users (mặc định: true)
+$allow_all = apply_filters('rcm_allow_all_categories_for_guests', true);
+
+// Tùy chỉnh URL chuyển hướng khi không có quyền truy cập (mặc định: home_url())
+$redirect_url = apply_filters('rcm_access_denied_redirect', home_url(), $post_id);
 ```
 
 ### Actions
 
 ```php
-// Sau khi lưu permissions
-do_action('rcm_permissions_saved', $role_name, $category_ids);
-
 // Khi user bị chặn truy cập
 do_action('rcm_access_denied', $post_id, $user_id);
+```
+
+### Ví dụ sử dụng
+
+```php
+// Ẩn tất cả posts với guest users
+add_filter('rcm_allow_all_categories_for_guests', '__return_false');
+
+// Chuyển hướng đến trang tùy chỉnh khi không có quyền
+add_filter('rcm_access_denied_redirect', function($url, $post_id) {
+    return get_permalink(123); // ID của trang "Access Denied"
+}, 10, 2);
+
+// Ghi log khi user bị chặn
+add_action('rcm_access_denied', function($post_id, $user_id) {
+    error_log("User {$user_id} denied access to post {$post_id}");
+}, 10, 2);
 ```
 
 ## Bảo mật
@@ -187,9 +204,16 @@ Nếu gặp vấn đề, bạn có thể:
 
 A: Hiện tại plugin chỉ hỗ trợ posts mặc định. Hỗ trợ custom post types sẽ được thêm trong phiên bản sau.
 
+### Q: Người dùng chưa đăng nhập (guest) có thể xem posts không?
+
+A: Mặc định, guest users có thể xem tất cả posts. Bạn có thể thay đổi hành vi này bằng filter:
+```php
+add_filter('rcm_allow_all_categories_for_guests', '__return_false');
+```
+
 ### Q: Làm sao để cho phép một user xem tất cả categories?
 
-A: Không chọn category nào cho vai trò đó, hoặc chọn tất cả categories.
+A: Chọn tất cả categories cho vai trò đó trong trang cấu hình.
 
 ### Q: Plugin có làm chậm website không?
 

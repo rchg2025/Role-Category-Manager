@@ -245,7 +245,7 @@
      */
     $(window).on('beforeunload', function() {
         if (currentRole && hasChanges()) {
-            return 'Bạn có thay đổi chưa được lưu. Bạn có chắc muốn rời khỏi trang?';
+            return rcmAjax.strings.unsaved || 'Bạn có thay đổi chưa được lưu. Bạn có chắc muốn rời khỏi trang?';
         }
     });
     

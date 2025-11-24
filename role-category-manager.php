@@ -149,6 +149,7 @@ class Role_Category_Manager {
                 'saved' => __('Đã lưu thành công!', 'role-category-manager'),
                 'error' => __('Có lỗi xảy ra. Vui lòng thử lại.', 'role-category-manager'),
                 'loading' => __('Đang tải...', 'role-category-manager'),
+                'unsaved' => __('Bạn có thay đổi chưa được lưu. Bạn có chắc muốn rời khỏi trang?', 'role-category-manager'),
             )
         ));
     }
@@ -294,6 +295,11 @@ class Role_Category_Manager {
         // Lấy categories được phép của user hiện tại
         $allowed_categories = $this->get_allowed_categories_for_current_user();
         
+        // Nếu trả về 'all', không áp dụng lọc (cho guest users)
+        if (in_array('all', $allowed_categories)) {
+            return;
+        }
+        
         // Nếu không có category nào được phép, ẩn tất cả posts
         if (empty($allowed_categories)) {
             $query->set('post__in', array(0));
@@ -341,6 +347,11 @@ class Role_Category_Manager {
         // Lấy categories được phép của user
         $allowed_categories = $this->get_allowed_categories_for_current_user();
         
+        // Nếu trả về 'all', cho phép truy cập (cho guest users)
+        if (in_array('all', $allowed_categories)) {
+            return;
+        }
+        
         // Kiểm tra xem post có thuộc category được phép không
         $has_permission = false;
         foreach ($post_categories as $cat_id) {
@@ -352,7 +363,13 @@ class Role_Category_Manager {
         
         // Nếu không có quyền, chuyển hướng về trang chủ
         if (!$has_permission) {
-            wp_redirect(home_url());
+            // Filter cho phép tùy chỉnh URL chuyển hướng
+            $redirect_url = apply_filters('rcm_access_denied_redirect', home_url(), $post->ID);
+            
+            // Action hook trước khi chuyển hướng
+            do_action('rcm_access_denied', $post->ID, get_current_user_id());
+            
+            wp_redirect($redirect_url);
             exit;
         }
     }
@@ -361,9 +378,18 @@ class Role_Category_Manager {
      * Lấy danh sách categories được phép cho user hiện tại
      */
     private function get_allowed_categories_for_current_user() {
-        // Nếu user chưa đăng nhập, không có quyền gì
+        // Nếu user chưa đăng nhập, cho phép xem tất cả (có thể thay đổi theo nhu cầu)
         if (!is_user_logged_in()) {
-            return array();
+            // Filter cho phép tùy chỉnh hành vi với user chưa đăng nhập
+            $allow_all_for_guests = apply_filters('rcm_allow_all_categories_for_guests', true);
+            
+            if ($allow_all_for_guests) {
+                // Trả về mảng rỗng để không áp dụng lọc
+                return array('all');
+            } else {
+                // Trả về mảng rỗng để ẩn tất cả
+                return array();
+            }
         }
         
         $user = wp_get_current_user();
