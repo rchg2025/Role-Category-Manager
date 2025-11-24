@@ -74,7 +74,7 @@ Tất cả các ID và class trong plugin đều bắt đầu với prefix `rchg
 
 ## Tác giả
 
-Phát triển bởi Your Name
+Phát triển bởi Rồng Con HG
 
 ## Phiên bản
 
