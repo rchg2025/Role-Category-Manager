@@ -384,7 +384,7 @@ class Role_Category_Manager {
             $allow_all_for_guests = apply_filters('rcm_allow_all_categories_for_guests', true);
             
             if ($allow_all_for_guests) {
-                // Trả về mảng rỗng để không áp dụng lọc
+                // Trả về mảng với 'all' để không áp dụng lọc
                 return array('all');
             } else {
                 // Trả về mảng rỗng để ẩn tất cả
