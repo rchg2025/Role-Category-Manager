@@ -1,0 +1,123 @@
+/* 
+ * Role Category Manager - Frontend Styles
+ * Tone màu chủ đạo: Xanh dương và Trắng
+ */
+
+:root {
+    --rchg-primary: #2563eb;
+    --rchg-primary-dark: #1e40af;
+    --rchg-primary-light: #3b82f6;
+    --rchg-success: #10b981;
+    --rchg-warning: #f59e0b;
+    --rchg-white: #ffffff;
+    --rchg-gray-50: #f8fafc;
+    --rchg-gray-100: #f1f5f9;
+    --rchg-gray-200: #e2e8f0;
+    --rchg-gray-700: #334155;
+}
+
+/* Notice Messages */
+.rchg_mu_notice {
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin: 20px 0;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.rchg_mu_notice_success {
+    background: #d1fae5;
+    color: #065f46;
+    border-left: 4px solid var(--rchg-success);
+}
+
+.rchg_mu_notice_warning {
+    background: #fef3c7;
+    color: #92400e;
+    border-left: 4px solid var(--rchg-warning);
+}
+
+/* User Categories Display */
+.rchg_mu_user_categories {
+    background: var(--rchg-white);
+    border: 2px solid var(--rchg-gray-200);
+    border-radius: 12px;
+    padding: 25px;
+    margin: 20px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.rchg_mu_user_categories_title {
+    color: var(--rchg-primary-dark);
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 20px 0;
+    padding-bottom: 15px;
+    border-bottom: 3px solid var(--rchg-primary);
+}
+
+.rchg_mu_user_categories_list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 15px;
+}
+
+.rchg_mu_user_category_item {
+    background: var(--rchg-gray-50);
+    border: 2px solid var(--rchg-gray-200);
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.rchg_mu_user_category_item:hover {
+    background: var(--rchg-white);
+    border-color: var(--rchg-primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.15);
+}
+
+.rchg_mu_user_category_link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px 18px;
+    color: var(--rchg-gray-700);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+    transition: color 0.3s ease;
+}
+
+.rchg_mu_user_category_link:hover {
+    color: var(--rchg-primary);
+}
+
+.rchg_mu_user_category_count {
+    background: var(--rchg-primary);
+    color: var(--rchg-white);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-left: 10px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .rchg_mu_user_categories {
+        padding: 20px;
+    }
+    
+    .rchg_mu_user_categories_list {
+        grid-template-columns: 1fr;
+    }
+    
+    .rchg_mu_user_categories_title {
+        font-size: 18px;
+    }
+}
+
