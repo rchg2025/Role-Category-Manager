@@ -1,0 +1,35 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/backups/
+
+# System Files
+.DS_Store
+Thumbs.db
+*.log
+
+# Editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# PHP
+vendor/
+composer.lock
+
+# Build
+dist/
+build/
