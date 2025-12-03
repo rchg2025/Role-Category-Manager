@@ -1,14 +1,7 @@
 <?php
-/**
- * Class xử lý phân quyền
- */
-
-if (!defined('ABSPATH')) {
-    exit;
-}
+if (!defined('ABSPATH')) exit;
 
 class RCHG_MU_Permissions {
-    
     private static $instance = null;
     
     public static function get_instance() {
@@ -19,329 +12,287 @@ class RCHG_MU_Permissions {
     }
     
     private function __construct() {
-        // Lọc query bài viết dựa trên phân quyền (frontend)
-        add_action('pre_get_posts', array($this, 'filter_posts_by_permission'));
-        
-        // Ẩn categories không có quyền xem trong menu (frontend)
+        // Frontend & Admin filtering
+        add_filter('pre_get_posts', array($this, 'filter_posts_by_permission'), 10);
+        add_action('template_redirect', array($this, 'check_single_post_permission'));
         add_filter('get_terms', array($this, 'filter_categories'), 10, 3);
         
-        // Kiểm tra quyền xem bài viết đơn lẻ
-        add_action('template_redirect', array($this, 'check_single_post_permission'));
-
-        // ENFORCE edit/create permissions in wp-admin
-        if (is_admin()) {
-            // Hide disallowed categories in editor & quick edit
-            add_filter('get_terms', array($this, 'filter_admin_categories'), 11, 3);
-
-            // Block editing posts outside UI based on categories
-            add_filter('map_meta_cap', array($this, 'enforce_post_caps'), 10, 4);
-
-            // Block Add New when user has no create permission
-            add_filter('user_has_cap', array($this, 'enforce_user_caps'), 10, 4);
-        }
-
-        // Default user-specific permissions on user creation (copy from role)
-        add_action('user_register', array($this, 'assign_defaults_on_user_register'));        
+        // Deep permission controls
+        add_filter('map_meta_cap', array($this, 'filter_post_capabilities'), 10, 4);
+        add_filter('user_has_cap', array($this, 'filter_create_post_cap'), 10, 3);
+        
+        // Auto-assign on user registration
+        add_action('user_register', array($this, 'assign_default_permissions'));
     }
     
     /**
-     * Lấy danh sách categories mà user có quyền xem
+     * Get user permissions for a category
      */
-    public function get_allowed_categories_for_user($user_id = null, $permission = 'view') {
-        if (!$user_id) {
-            $user_id = get_current_user_id();
-        }
-        
-        // Nếu user không đăng nhập hoặc là admin, cho phép xem tất cả
-        if (!$user_id || user_can($user_id, 'manage_options')) {
-            return 'all';
-        }
+    public function get_user_permission($user_id, $category_id, $permission = 'can_view') {
+        global $wpdb;
         
         $user = get_userdata($user_id);
-        if (!$user) {
-            return array();
+        if (!$user) return false;
+        
+        // Validate permission column name (whitelist only)
+        $allowed_permissions = array('can_view', 'can_edit', 'can_create');
+        if (!in_array($permission, $allowed_permissions, true)) {
+            return false;
         }
         
-        $roles = $user->roles;
-        if (empty($roles)) {
-            return array();
-        }
+        // Escape column name safely (already validated against whitelist)
+        $safe_permission = esc_sql($permission);
         
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'rchg_mu_permissions';
-
-        $column = 'can_view';
-        if ($permission === 'edit') $column = 'can_edit';
-        if ($permission === 'create') $column = 'can_create';
-
-        $allowed_categories = array();
-
-        // Ưu tiên cấu hình theo user
-        $user_cats = $wpdb->get_col($wpdb->prepare(
-            "SELECT category_id FROM {$table_name} WHERE permission_type = 'user' AND user_id = %d AND {$column} = 1",
-            $user_id
-        ));
-
-        if (!empty($user_cats)) {
-            $allowed_categories = array_map('intval', $user_cats);
-        } else {
-            // Nếu không có theo user, lấy theo role
-            foreach ($roles as $role) {
-                $categories = $wpdb->get_col($wpdb->prepare(
-                    "SELECT category_id FROM {$table_name} WHERE permission_type = 'role' AND role_name = %s AND {$column} = 1",
-                    $role
-                ));
-                if (!empty($categories)) {
-                    $allowed_categories = array_merge($allowed_categories, array_map('intval', $categories));
-                }
-            }
-        }
-
-        // Nếu không có cấu hình nào, mặc định không hạn chế (tránh khóa nhầm)
-        if ($permission === 'view' && empty($allowed_categories)) {
-            return 'all';
-        }
-
-        return array_unique($allowed_categories);
-    }
-    
-    /**
-     * Lọc bài viết theo phân quyền
-     */
-    public function filter_posts_by_permission($query) {
-        // Chỉ áp dụng cho query chính, không phải admin
-        if (is_admin() || !$query->is_main_query()) {
-            return;
-        }
-        
-        $allowed_categories = $this->get_allowed_categories_for_user();
-        
-        // Nếu cho phép xem tất cả, không làm gì
-        if ($allowed_categories === 'all') {
-            return;
-        }
-        
-        // Nếu không có category nào được phép xem
-        if (empty($allowed_categories)) {
-            $query->set('post__in', array(0)); // Không hiển thị bài viết nào
-            return;
-        }
-        
-        // Lọc theo categories được phép
-        $tax_query = $query->get('tax_query');
-        if (!is_array($tax_query)) {
-            $tax_query = array();
-        }
-        
-        $tax_query[] = array(
-            'taxonomy' => 'category',
-            'field' => 'term_id',
-            'terms' => $allowed_categories,
-            'operator' => 'IN'
+        // Check user-specific permission first
+        $user_perm = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->prepare(
+                "SELECT $safe_permission FROM {$wpdb->prefix}rchg_mu_permissions WHERE permission_type = 'user' AND user_id = %d AND category_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $user_id,
+                $category_id
+            )
         );
         
-        $query->set('tax_query', $tax_query);
+        if ($user_perm !== null) {
+            return (bool) $user_perm;
+        }
+        
+        // Fallback to role permission
+        foreach ($user->roles as $role) {
+            $role_perm = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $wpdb->prepare(
+                    "SELECT $safe_permission FROM {$wpdb->prefix}rchg_mu_permissions WHERE permission_type = 'role' AND role_name = %s AND category_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    $role,
+                    $category_id
+                )
+            );
+            
+            if ($role_perm !== null) {
+                return (bool) $role_perm;
+            }
+        }
+        
+        // Default: allow view, deny edit/create
+        return ($permission === 'can_view');
     }
     
     /**
-     * Lọc danh sách categories
+     * Get all categories user has permission for
      */
-    public function filter_categories($terms, $taxonomies, $args) {
-        // Chỉ áp dụng cho category taxonomy
-        if (!in_array('category', $taxonomies) || is_admin()) {
-            return $terms;
-        }
+    public function get_user_categories($user_id, $permission = 'can_view') {
+        // Remove filter temporarily to prevent infinite loop
+        remove_filter('get_terms', array($this, 'filter_categories'), 10);
         
-        $allowed_categories = $this->get_allowed_categories_for_user(null, 'view');
+        $categories = get_categories(array('hide_empty' => false));
+        $allowed = array();
         
-        // Nếu cho phép xem tất cả
-        if ($allowed_categories === 'all') {
-            return $terms;
-        }
-        
-        // Nếu không có category nào được phép
-        if (empty($allowed_categories)) {
-            return array();
-        }
-        
-        // Lọc các categories
-        $filtered_terms = array();
-        foreach ($terms as $term) {
-            if (in_array($term->term_id, $allowed_categories)) {
-                $filtered_terms[] = $term;
+        foreach ($categories as $cat) {
+            if ($this->get_user_permission($user_id, $cat->term_id, $permission)) {
+                $allowed[] = $cat->term_id;
             }
         }
         
-        return $filtered_terms;
-    }
-
-    /**
-     * Ẩn categories trong wp-admin (editor, quick edit) theo quyền edit/create
-     */
-    public function filter_admin_categories($terms, $taxonomies, $args) {
-        if (!is_admin() || empty($terms) || !in_array('category', (array)$taxonomies, true)) {
-            return $terms;
-        }
-        // Chỉ áp dụng ở màn soạn bài hoặc quick edit
-        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
-        if ($screen && $screen->post_type && $screen->base && in_array($screen->base, array('post','edit'))) {
-            $allowed = $this->get_allowed_categories_for_user(null, 'create');
-            if ($allowed === 'all') {
-                return $terms;
-            }
-            $allowed = is_array($allowed) ? $allowed : array();
-            $filtered = array();
-            foreach ($terms as $t) {
-                if (in_array((int)$t->term_id, $allowed, true)) {
-                    $filtered[] = $t;
-                }
-            }
-            return $filtered;
-        }
-        return $terms;
+        // Re-add filter
+        add_filter('get_terms', array($this, 'filter_categories'), 10, 3);
+        
+        return $allowed;
     }
     
     /**
-     * Kiểm tra quyền xem bài viết đơn lẻ
+     * Filter posts in queries
+     */
+    public function filter_posts_by_permission($query) {
+        if (is_admin() || !$query->is_main_query()) return;
+        if (current_user_can('manage_options')) return;
+        
+        $user_id = get_current_user_id();
+        if (!$user_id) return;
+        
+        $allowed_cats = $this->get_user_categories($user_id, 'can_view');
+        
+        if (!empty($allowed_cats)) {
+            $query->set('category__in', $allowed_cats);
+        } else {
+            $query->set('category__in', array(0)); // No posts
+        }
+    }
+    
+    /**
+     * Check permission for single post
      */
     public function check_single_post_permission() {
-        if (!is_single()) {
-            return;
-        }
+        if (!is_single()) return;
+        if (current_user_can('manage_options')) return;
+        
+        $user_id = get_current_user_id();
+        if (!$user_id) return;
         
         $post_id = get_the_ID();
-        $categories = get_the_category($post_id);
+        $categories = wp_get_post_categories($post_id);
         
-        if (empty($categories)) {
-            return;
-        }
-        
-    $allowed_categories = $this->get_allowed_categories_for_user(null, 'view');
-        
-        // Nếu cho phép xem tất cả
-        if ($allowed_categories === 'all') {
-            return;
-        }
-        
-        // Kiểm tra xem bài viết có thuộc category được phép không
         $has_permission = false;
-        foreach ($categories as $category) {
-            if (in_array($category->term_id, $allowed_categories)) {
+        foreach ($categories as $cat_id) {
+            if ($this->get_user_permission($user_id, $cat_id, 'can_view')) {
                 $has_permission = true;
                 break;
             }
         }
         
-        // Nếu không có quyền, chuyển về trang 404
         if (!$has_permission) {
-            global $wp_query;
-            $wp_query->set_404();
-            status_header(404);
-            get_template_part(404);
-            exit();
+            wp_die(esc_html__('Bạn không có quyền xem bài viết này.', 'role-category-manager'));
         }
     }
     
     /**
-     * Kiểm tra user có quyền xem category không
+     * Filter categories in dropdowns
      */
-    public function user_can_view_category($category_id, $user_id = null) {
-        $allowed_categories = $this->get_allowed_categories_for_user($user_id, 'view');
+    public function filter_categories($terms, $taxonomies, $args) {
+        if (!in_array('category', (array) $taxonomies)) return $terms;
+        if (current_user_can('manage_options')) return $terms;
         
-        if ($allowed_categories === 'all') {
-            return true;
+        $user_id = get_current_user_id();
+        if (!$user_id) return $terms;
+        
+        // In admin: filter by create permission
+        // In frontend: filter by view permission
+        $permission = is_admin() ? 'can_create' : 'can_view';
+        
+        // Get allowed categories directly from database to avoid infinite loop
+        global $wpdb;
+        $user = get_userdata($user_id);
+        if (!$user) return array();
+        
+        // Validate permission column
+        $allowed_permissions = array('can_view', 'can_edit', 'can_create');
+        if (!in_array($permission, $allowed_permissions, true)) {
+            return $terms;
+        }
+        $safe_permission = esc_sql($permission);
+        
+        // Get user-specific permissions
+        $user_cats = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->prepare(
+                "SELECT category_id FROM {$wpdb->prefix}rchg_mu_permissions WHERE permission_type = 'user' AND user_id = %d AND $safe_permission = 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                $user_id
+            )
+        );
+        
+        // Get role permissions
+        $role_cats = array();
+        if (!empty($user->roles)) {
+            $roles_placeholder = implode(',', array_fill(0, count($user->roles), '%s'));
+            $role_cats = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                $wpdb->prepare(
+                    "SELECT category_id FROM {$wpdb->prefix}rchg_mu_permissions WHERE permission_type = 'role' AND role_name IN ($roles_placeholder) AND $safe_permission = 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+                    ...$user->roles
+                )
+            );
         }
         
-        return in_array($category_id, $allowed_categories);
+        $allowed_cats = array_unique(array_merge($user_cats, $role_cats));
+        
+        if (empty($allowed_cats)) {
+            return is_array($terms) ? array() : array();
+        }
+        
+        // Filter terms
+        $filtered = array();
+        foreach ($terms as $term) {
+            if (in_array($term->term_id, $allowed_cats)) {
+                $filtered[] = $term;
+            }
+        }
+        
+        return $filtered;
     }
-
+    
     /**
-     * Enforce edit permissions on specific posts (edit/delete/publish)
+     * Filter edit/delete post capabilities
      */
-    public function enforce_post_caps($caps, $cap, $user_id, $args) {
-        $checked_caps = array('edit_post', 'delete_post', 'publish_post');
-        if (!in_array($cap, $checked_caps, true)) {
-            return $caps;
-        }
-        $post_id = isset($args[0]) ? (int)$args[0] : 0;
-        if (!$post_id) {
-            return $caps;
-        }
+    public function filter_post_capabilities($caps, $cap, $user_id, $args) {
+        if (!in_array($cap, array('edit_post', 'delete_post'))) return $caps;
+        if (current_user_can('manage_options')) return $caps;
+        
+        $post_id = isset($args[0]) ? $args[0] : 0;
+        if (!$post_id) return $caps;
+        
         $post = get_post($post_id);
-        if (!$post || $post->post_type !== 'post') {
-            return $caps;
+        if (!$post || $post->post_type !== 'post') return $caps;
+        
+        $categories = wp_get_post_categories($post_id);
+        
+        $has_permission = false;
+        foreach ($categories as $cat_id) {
+            if ($this->get_user_permission($user_id, $cat_id, 'can_edit')) {
+                $has_permission = true;
+                break;
+            }
         }
-
-        // Bài viết thuộc các category nào?
-        $cats = wp_get_post_categories($post_id);
-        if (empty($cats)) {
-            return $caps; // Không ràng buộc nếu chưa có category
+        
+        if (!$has_permission) {
+            $caps[] = 'do_not_allow';
         }
-        $allowed = $this->get_allowed_categories_for_user($user_id, 'edit');
-        if ($allowed === 'all') {
-            return $caps;
-        }
-        $allowed = is_array($allowed) ? $allowed : array();
-        $can = false;
-        foreach ($cats as $cid) {
-            if (in_array((int)$cid, $allowed, true)) { $can = true; break; }
-        }
-        if (!$can) {
-            return array('do_not_allow');
-        }
+        
         return $caps;
     }
-
+    
     /**
-     * Enforce create permission by denying edit_posts if user has no creatable categories
+     * Filter create post capability
      */
-    public function enforce_user_caps($allcaps, $caps, $args, $user) {
-        $requested = isset($args[0]) ? $args[0] : '';
-        if ($requested !== 'edit_posts') {
+    public function filter_create_post_cap($allcaps, $caps, $args) {
+        if (!isset($args[0]) || !in_array($args[0], array('edit_posts', 'create_posts'))) {
             return $allcaps;
         }
-        // Chỉ áp dụng cho post type bài viết chính
-        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
-        $post_type = $screen && !empty($screen->post_type) ? $screen->post_type : 'post';
-        if ($post_type !== 'post') {
-            return $allcaps;
-        }
-        $allowed = $this->get_allowed_categories_for_user($user->ID, 'create');
-        if ($allowed !== 'all' && empty($allowed)) {
+        
+        if (current_user_can('manage_options')) return $allcaps;
+        
+        $user_id = get_current_user_id();
+        if (!$user_id) return $allcaps;
+        
+        // Check if user has at least one category with create permission
+        $allowed_cats = $this->get_user_categories($user_id, 'can_create');
+        
+        if (empty($allowed_cats)) {
             $allcaps['edit_posts'] = false;
+            $allcaps['create_posts'] = false;
         }
+        
         return $allcaps;
     }
-
+    
     /**
-     * Khi tạo user mới: copy phân quyền theo Role sang user để tiện chỉnh sửa
+     * Assign default permissions when user is created
      */
-    public function assign_defaults_on_user_register($user_id) {
+    public function assign_default_permissions($user_id) {
         $user = get_userdata($user_id);
-        if (!$user) return;
-        global $wpdb; $table = $wpdb->prefix . 'rchg_mu_permissions';
-        // Nếu user đã có cấu hình thì bỏ qua
-        $exists = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(1) FROM {$table} WHERE permission_type='user' AND user_id=%d", $user_id));
-        if ($exists > 0) return;
-        if (empty($user->roles)) return;
-        // Lấy theo role
-        $rows = $wpdb->get_results(
-            "SELECT role_name, category_id, can_view, can_edit, can_create FROM {$table} WHERE permission_type='role'",
+        if (!$user || empty($user->roles)) return;
+        
+        global $wpdb;
+        
+        // Get role permissions
+        $role = $user->roles[0];
+        $role_perms = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}rchg_mu_permissions WHERE permission_type = 'role' AND role_name = %s",
+                $role
+            ),
             ARRAY_A
         );
-        if (empty($rows)) return;
-        foreach ($rows as $r) {
-            if (!in_array($r['role_name'], (array)$user->roles, true)) continue;
-            $wpdb->insert($table, array(
-                'permission_type' => 'user',
-                'role_name' => null,
-                'user_id' => $user_id,
-                'category_id' => (int)$r['category_id'],
-                'can_view' => (int)$r['can_view'],
-                'can_edit' => (int)$r['can_edit'],
-                'can_create' => (int)$r['can_create']
-            ), array('%s','%s','%d','%d','%d','%d','%d'));
+        
+        // Clone to user
+        if (is_array($role_perms)) {
+            foreach ($role_perms as $perm) {
+                $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "{$wpdb->prefix}rchg_mu_permissions",
+                    array(
+                        'permission_type' => 'user',
+                        'user_id' => $user_id,
+                        'category_id' => intval($perm['category_id']),
+                        'can_view' => intval($perm['can_view']),
+                        'can_edit' => intval($perm['can_edit']),
+                        'can_create' => intval($perm['can_create']),
+                    )
+                );
+            }
         }
     }
 }
-
